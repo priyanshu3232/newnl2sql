@@ -206,3 +206,11 @@ with col_f3:
         st.metric("Success Rate", f"{success_rate:.1f}%")
     else:
         st.metric("Success Rate", "N/A")
+
+--- a/app.py
++++ b/app.py
+@@ with st.sidebar:
+-    # Load sample schema
+-    if st.button("Load Sample Schema"):
+-        st.session_state.schema_manager.load_sample_schema()
+-        st.success("Sample schema loaded!")
