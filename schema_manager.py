@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import os
 from typing import Dict, List, Optional
 
 class SchemaManager:
@@ -71,6 +72,53 @@ class SchemaManager:
         
         # Create actual database with sample data
         self._create_sample_database()
+    def load_tally_schema(self) -> None:
+        """
+        Load the full Tally-ERP schema from tally_schema.sql.
+        Drops any existing tables, then runs the DDL and
+        builds self.schema for your parser.
+        """
+        # 1) Read the SQL file
+        ddl_path = os.path.join(os.path.dirname(__file__), "tally_schema.sql")
+        with open(ddl_path, "r") as f:
+            ddl_sql = f.read()
+
+        # 2) Build the in-memory schema map
+        self.schema = {
+            "config": {
+                "columns": [
+                    {"name":"name","type":"VARCHAR(64)"},
+                    {"name":"value","type":"VARCHAR(1024)"},
+                    {"name":"user_id","type":"VARCHAR(255)"},
+                    {"name":"company_name","type":"VARCHAR(255)"}
+                ],
+                "relationships": []
+            },
+            "mst_group": {
+                "columns": [
+                    {"name":"guid","type":"VARCHAR(64)"},
+                    {"name":"name","type":"VARCHAR(1024)"},
+                    # … all the columns …
+                ],
+                "relationships": []
+            },
+            # … repeat for every mst_… and trn_… table …
+        }
+
+        # 3) (Re)create the SQLite DB
+        if self.connection:
+            self.connection.close()
+        self.connection = sqlite3.connect(self.db_path)
+        cursor = self.connection.cursor()
+
+        # 4) Drop tables if they exist
+        for tbl in self.schema:
+            cursor.execute(f"DROP TABLE IF EXISTS {tbl}")
+
+        # 5) Execute the full DDL
+        cursor.executescript(ddl_sql)
+        self.connection.commit()
+        cursor.close()
     
     def _create_sample_database(self) -> None:
         """Create SQLite database with sample data"""
