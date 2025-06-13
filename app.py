@@ -96,39 +96,44 @@ with st.sidebar:
         if master_tables:
             with st.expander("📋 Master Tables", expanded=False):
                 for table_name, table_info in master_tables.items():
-                    with st.expander(f"Table: {table_name}"):
-                        st.write(f"**Description:** {table_info.get('description', 'No description')}")
-                        st.write(f"**Records:** {stats.get(table_name, {}).get('row_count', 0)}")
-                        
-                        st.markdown("**Key Columns:**")
-                        key_columns = [col for col in table_info['columns'][:5]]  # Show first 5
-                        for col in key_columns:
-                            st.text(f"• {col['name']} ({col['type']})")
-                        
-                        if len(table_info['columns']) > 5:
-                            st.text(f"... and {len(table_info['columns'])-5} more columns")
+                    st.markdown(f"**{table_name}**")
+                    st.write(f"Description: {table_info.get('description', 'No description')}")
+                    st.write(f"Records: {stats.get(table_name, {}).get('row_count', 0)}")
+                    
+                    st.markdown("Key Columns:")
+                    key_columns = [col for col in table_info['columns'][:5]]  # Show first 5
+                    for col in key_columns:
+                        st.text(f"• {col['name']} ({col['type']})")
+                    
+                    if len(table_info['columns']) > 5:
+                        st.text(f"... and {len(table_info['columns'])-5} more columns")
+                    st.markdown("---")
         
         # Transaction Tables
         if transaction_tables:
             with st.expander("💱 Transaction Tables", expanded=False):
                 for table_name, table_info in transaction_tables.items():
-                    with st.expander(f"Table: {table_name}"):
-                        st.write(f"**Description:** {table_info.get('description', 'No description')}")
-                        st.write(f"**Records:** {stats.get(table_name, {}).get('row_count', 0)}")
-                        
-                        st.markdown("**Key Columns:**")
-                        key_columns = [col for col in table_info['columns'][:5]]
-                        for col in key_columns:
-                            st.text(f"• {col['name']} ({col['type']})")
+                    st.markdown(f"**{table_name}**")
+                    st.write(f"Description: {table_info.get('description', 'No description')}")
+                    st.write(f"Records: {stats.get(table_name, {}).get('row_count', 0)}")
+                    
+                    st.markdown("Key Columns:")
+                    key_columns = [col for col in table_info['columns'][:5]]
+                    for col in key_columns:
+                        st.text(f"• {col['name']} ({col['type']})")
+                    st.markdown("---")
         
         # Other Tables  
         if other_tables:
             with st.expander("⚙️ Configuration Tables", expanded=False):
                 for table_name, table_info in other_tables.items():
-                    with st.expander(f"Table: {table_name}"):
-                        st.write(f"**Records:** {stats.get(table_name, {}).get('row_count', 0)}")
-                        for col in table_info['columns'][:3]:
-                            st.text(f"• {col['name']} ({col['type']})")
+                    st.markdown(f"**{table_name}**")
+                    st.write(f"Records: {stats.get(table_name, {}).get('row_count', 0)}")
+                    
+                    st.markdown("Key Columns:")
+                    for col in table_info['columns'][:3]:
+                        st.text(f"• {col['name']} ({col['type']})")
+                    st.markdown("---")
 
 # Main content area
 col1, col2 = st.columns([2, 1])
