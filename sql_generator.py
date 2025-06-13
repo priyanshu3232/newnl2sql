@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 from query_parser import ParsedQuery
 import re
 from datetime import datetime, timedelta
@@ -7,10 +7,13 @@ class SQLGenerator:
     def __init__(self):
         self.assumptions = []
         self.confidence = 0.0
+        self.parameters = []  # Store parameters for parameterized queries
         
     def generate(self, parsed_query: ParsedQuery, schema: Dict) -> Dict:
+        """Generate SQL query with parameters from parsed natural language"""
         self.assumptions = []
         self.confidence = 1.0
+        self.parameters = []
         
         if parsed_query.action == 'SELECT':
             query = self._generate_select(parsed_query, schema)
@@ -25,52 +28,142 @@ class SQLGenerator:
         
         return {
             'query': query,
+            'parameters': self.parameters,  # Include parameters
             'assumptions': self.assumptions,
             'confidence': self.confidence,
             'parsed': parsed_query
         }
     
     def _generate_select(self, parsed: ParsedQuery, schema: Dict) -> str:
+        """Generate SELECT query with parameters"""
         query_parts = []
         
+        # SELECT clause
         select_clause = self._build_select_clause(parsed)
         query_parts.append(select_clause)
         
+        # FROM clause
         from_clause = self._build_from_clause(parsed)
         query_parts.append(from_clause)
         
+        # JOIN clauses
         if parsed.joins:
             join_clauses = self._build_join_clauses(parsed)
             query_parts.extend(join_clauses)
         
+        # WHERE clause
         if parsed.conditions:
             where_clause = self._build_where_clause(parsed)
             query_parts.append(where_clause)
         
+        # GROUP BY clause
         if parsed.group_by or parsed.aggregations:
             group_by_clause = self._build_group_by_clause(parsed)
             if group_by_clause:
                 query_parts.append(group_by_clause)
         
+        # ORDER BY clause
         if parsed.order_by:
             order_by_clause = self._build_order_by_clause(parsed)
             query_parts.append(order_by_clause)
         
+        # LIMIT clause
         if parsed.limit:
             query_parts.append(f"LIMIT {parsed.limit}")
         
         return '\n'.join(query_parts)
     
+    def _build_where_clause(self, parsed: ParsedQuery) -> str:
+        """Build WHERE clause with proper parameterization"""
+        conditions = []
+        
+        for condition in parsed.conditions:
+            field = condition['field']
+            operator = condition['operator']
+            value = condition['value']
+            
+            if operator == 'date_condition':
+                date_condition = self._build_date_condition(condition)
+                conditions.append(date_condition)
+            elif operator == 'LIKE':
+                conditions.append(f"{field} LIKE ?")
+                # Add wildcard for partial matching
+                self.parameters.append(f"%{value}%")
+                self.assumptions.append(f"Searching for partial match in {field}")
+            elif operator == 'IN':
+                # Handle IN operator with multiple values
+                values = [v.strip() for v in value.split(',')]
+                placeholders = ', '.join(['?' for _ in values])
+                conditions.append(f"{field} IN ({placeholders})")
+                self.parameters.extend(values)
+            elif operator == 'BETWEEN':
+                # Handle BETWEEN operator (expects two values)
+                if ' and ' in value.lower():
+                    parts = value.lower().split(' and ')
+                    conditions.append(f"{field} BETWEEN ? AND ?")
+                    self.parameters.extend([parts[0].strip(), parts[1].strip()])
+                else:
+                    # Fallback to regular comparison
+                    conditions.append(f"{field} {operator} ?")
+                    self.parameters.append(value)
+            else:
+                # Standard comparison with parameter
+                conditions.append(f"{field} {operator} ?")
+                self.parameters.append(value)
+        
+        if conditions:
+            return f"WHERE {' AND '.join(conditions)}"
+        return ""
+    
+    def _build_date_condition(self, condition: Dict) -> str:
+        """Build date-based conditions with parameters"""
+        field = condition['field']
+        value = condition['value']
+        condition_type = condition.get('type', '')
+        
+        if 'last' in value:
+            # Extract number and unit for relative dates
+            match = re.search(r'(\d+)\s+(day|month|year)', value)
+            if match:
+                number = int(match.group(1))
+                unit = match.group(2)
+                
+                self.assumptions.append(f"Interpreted '{value}' as date range from today")
+                
+                if unit == 'day':
+                    return f"{field} >= date('now', '-{number} days')"
+                elif unit == 'month':
+                    return f"{field} >= date('now', '-{number} months')"
+                elif unit == 'year':
+                    return f"{field} >= date('now', '-{number} years')"
+        
+        elif condition_type == 'since_date':
+            self.parameters.append(value)
+            return f"{field} >= ?"
+        elif condition_type == 'before_date':
+            self.parameters.append(value)
+            return f"{field} < ?"
+        elif condition_type == 'on_date':
+            self.parameters.append(value)
+            return f"{field} = ?"
+        
+        # Fallback
+        self.parameters.append(value)
+        return f"{field} = ?"
+    
     def _build_select_clause(self, parsed: ParsedQuery) -> str:
+        """Build SELECT clause"""
         if parsed.aggregations:
             select_items = []
             
+            # Add aggregations
             for agg in parsed.aggregations:
                 if agg['function'] == 'COUNT' and agg['column'] == '*':
                     select_items.append("COUNT(*)")
                 else:
                     select_items.append(f"{agg['function']}({agg['column']})")
             
+            # Add group by columns if any
             if parsed.group_by:
                 for col in parsed.group_by:
                     if col not in [agg['column'] for agg in parsed.aggregations]:
@@ -78,6 +171,7 @@ class SQLGenerator:
             
             return f"SELECT {', '.join(select_items)}"
         else:
+            # Regular select
             if parsed.columns:
                 if parsed.columns == ['*']:
                     return "SELECT *"
@@ -89,6 +183,7 @@ class SQLGenerator:
                 return "SELECT *"
     
     def _build_from_clause(self, parsed: ParsedQuery) -> str:
+        """Build FROM clause"""
         if not parsed.tables:
             self.assumptions.append("No tables identified, query may fail")
             self.confidence *= 0.1
@@ -98,6 +193,7 @@ class SQLGenerator:
         return f"FROM {primary_table}"
     
     def _build_join_clauses(self, parsed: ParsedQuery) -> List[str]:
+        """Build JOIN clauses"""
         join_clauses = []
         
         for join in parsed.joins:
@@ -113,61 +209,8 @@ class SQLGenerator:
         
         return join_clauses
     
-    def _build_where_clause(self, parsed: ParsedQuery) -> str:
-        conditions = []
-        
-        for condition in parsed.conditions:
-            field = condition['field']
-            operator = condition['operator']
-            value = condition['value']
-            
-            if operator == 'date_condition':
-                date_condition = self._build_date_condition(condition)
-                conditions.append(date_condition)
-            elif operator == 'LIKE':
-                conditions.append(f"{field} LIKE ?")
-                self.assumptions.append(f"Searching for partial match in {field}")
-            elif operator == 'IN':
-                placeholders = ', '.join(['?' for _ in value.split(',')])
-                conditions.append(f"{field} IN ({placeholders})")
-            elif operator == 'BETWEEN':
-                conditions.append(f"{field} BETWEEN ? AND ?")
-            else:
-                conditions.append(f"{field} {operator} ?")
-        
-        if conditions:
-            return f"WHERE {' AND '.join(conditions)}"
-        return ""
-    
-    def _build_date_condition(self, condition: Dict) -> str:
-        field = condition['field']
-        value = condition['value']
-        condition_type = condition.get('type', '')
-        
-        if 'last' in value:
-            match = re.search(r'(\d+)\s+(day|month|year)', value)
-            if match:
-                number = int(match.group(1))
-                unit = match.group(2)
-                
-                self.assumptions.append(f"Interpreted '{value}' as date range from today")
-                
-                if unit == 'day':
-                    return f"{field} >= date('now', '-{number} days')"
-                elif unit == 'month':
-                    return f"{field} >= date('now', '-{number} months')"
-                elif unit == 'year':
-                    return f"{field} >= date('now', '-{number} years')"
-        elif condition_type == 'since_date':
-            return f"{field} >= ?"
-        elif condition_type == 'before_date':
-            return f"{field} < ?"
-        elif condition_type == 'on_date':
-            return f"{field} = ?"
-        
-        return f"{field} = ?"
-    
     def _build_group_by_clause(self, parsed: ParsedQuery) -> str:
+        """Build GROUP BY clause"""
         if parsed.group_by:
             return f"GROUP BY {', '.join(parsed.group_by)}"
         elif parsed.aggregations and parsed.columns:
@@ -180,6 +223,7 @@ class SQLGenerator:
         return ""
     
     def _build_order_by_clause(self, parsed: ParsedQuery) -> str:
+        """Build ORDER BY clause"""
         order_items = []
         
         for order in parsed.order_by:
@@ -188,8 +232,9 @@ class SQLGenerator:
             order_items.append(f"{column} {direction}")
         
         return f"ORDER BY {', '.join(order_items)}"
-        
+    
     def _generate_insert(self, parsed: ParsedQuery, schema: Dict) -> str:
+        """Generate INSERT query with parameters"""
         if not parsed.tables:
             self.confidence = 0.1
             return "-- Unable to generate INSERT query: no table specified"
@@ -199,13 +244,15 @@ class SQLGenerator:
         self.confidence = 0.7
         
         if table in schema:
-            columns = [col['name'] for col in schema[table]['columns'] if col['name'] != 'id']
+            columns = [col['name'] for col in schema[table]['columns'] 
+                      if col['name'] != 'id' and not col.get('auto_increment', False)]
             placeholders = ', '.join(['?' for _ in columns])
             return f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})"
         
         return f"INSERT INTO {table} VALUES (?)"
     
     def _generate_update(self, parsed: ParsedQuery, schema: Dict) -> str:
+        """Generate UPDATE query with parameters"""
         if not parsed.tables:
             self.confidence = 0.1
             return "-- Unable to generate UPDATE query: no table specified"
@@ -215,6 +262,7 @@ class SQLGenerator:
         self.confidence = 0.7
         
         set_clause = "SET column_name = ?"
+        
         where_clause = ""
         if parsed.conditions:
             where_clause = self._build_where_clause(parsed)
@@ -229,11 +277,13 @@ class SQLGenerator:
         return '\n'.join(query_parts)
     
     def _generate_delete(self, parsed: ParsedQuery, schema: Dict) -> str:
+        """Generate DELETE query with parameters"""
         if not parsed.tables:
             self.confidence = 0.1
             return "-- Unable to generate DELETE query: no table specified"
         
         table = parsed.tables[0]
+        
         where_clause = ""
         if parsed.conditions:
             where_clause = self._build_where_clause(parsed)
