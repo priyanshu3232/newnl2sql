@@ -9,7 +9,6 @@ class SQLGenerator:
         self.confidence = 0.0
         
     def generate(self, parsed_query: ParsedQuery, schema: Dict) -> Dict:
-        """Generate SQL query from parsed natural language"""
         self.assumptions = []
         self.confidence = 1.0
         
@@ -32,57 +31,46 @@ class SQLGenerator:
         }
     
     def _generate_select(self, parsed: ParsedQuery, schema: Dict) -> str:
-        """Generate SELECT query"""
         query_parts = []
         
-        # SELECT clause
         select_clause = self._build_select_clause(parsed)
         query_parts.append(select_clause)
         
-        # FROM clause
         from_clause = self._build_from_clause(parsed)
         query_parts.append(from_clause)
         
-        # JOIN clauses
         if parsed.joins:
             join_clauses = self._build_join_clauses(parsed)
             query_parts.extend(join_clauses)
         
-        # WHERE clause
         if parsed.conditions:
             where_clause = self._build_where_clause(parsed)
             query_parts.append(where_clause)
         
-        # GROUP BY clause
         if parsed.group_by or parsed.aggregations:
             group_by_clause = self._build_group_by_clause(parsed)
             if group_by_clause:
                 query_parts.append(group_by_clause)
         
-        # ORDER BY clause
         if parsed.order_by:
             order_by_clause = self._build_order_by_clause(parsed)
             query_parts.append(order_by_clause)
         
-        # LIMIT clause
         if parsed.limit:
             query_parts.append(f"LIMIT {parsed.limit}")
         
         return '\n'.join(query_parts)
     
     def _build_select_clause(self, parsed: ParsedQuery) -> str:
-        """Build SELECT clause"""
         if parsed.aggregations:
             select_items = []
             
-            # Add aggregations
             for agg in parsed.aggregations:
                 if agg['function'] == 'COUNT' and agg['column'] == '*':
                     select_items.append("COUNT(*)")
                 else:
                     select_items.append(f"{agg['function']}({agg['column']})")
             
-            # Add group by columns if any
             if parsed.group_by:
                 for col in parsed.group_by:
                     if col not in [agg['column'] for agg in parsed.aggregations]:
@@ -90,7 +78,6 @@ class SQLGenerator:
             
             return f"SELECT {', '.join(select_items)}"
         else:
-            # Regular select
             if parsed.columns:
                 if parsed.columns == ['*']:
                     return "SELECT *"
@@ -102,7 +89,6 @@ class SQLGenerator:
                 return "SELECT *"
     
     def _build_from_clause(self, parsed: ParsedQuery) -> str:
-        """Build FROM clause"""
         if not parsed.tables:
             self.assumptions.append("No tables identified, query may fail")
             self.confidence *= 0.1
@@ -112,7 +98,6 @@ class SQLGenerator:
         return f"FROM {primary_table}"
     
     def _build_join_clauses(self, parsed: ParsedQuery) -> List[str]:
-        """Build JOIN clauses"""
         join_clauses = []
         
         for join in parsed.joins:
@@ -129,7 +114,6 @@ class SQLGenerator:
         return join_clauses
     
     def _build_where_clause(self, parsed: ParsedQuery) -> str:
-        """Build WHERE clause with parameterized queries"""
         conditions = []
         
         for condition in parsed.conditions:
@@ -138,22 +122,17 @@ class SQLGenerator:
             value = condition['value']
             
             if operator == 'date_condition':
-                # Handle special date conditions
                 date_condition = self._build_date_condition(condition)
                 conditions.append(date_condition)
             elif operator == 'LIKE':
-                # Use parameterized LIKE query
                 conditions.append(f"{field} LIKE ?")
                 self.assumptions.append(f"Searching for partial match in {field}")
             elif operator == 'IN':
-                # Handle IN operator
                 placeholders = ', '.join(['?' for _ in value.split(',')])
                 conditions.append(f"{field} IN ({placeholders})")
             elif operator == 'BETWEEN':
-                # Handle BETWEEN operator
                 conditions.append(f"{field} BETWEEN ? AND ?")
             else:
-                # Standard comparison with parameter
                 conditions.append(f"{field} {operator} ?")
         
         if conditions:
@@ -161,13 +140,11 @@ class SQLGenerator:
         return ""
     
     def _build_date_condition(self, condition: Dict) -> str:
-        """Build date-based conditions"""
         field = condition['field']
         value = condition['value']
         condition_type = condition.get('type', '')
         
         if 'last' in value:
-            # Extract number and unit
             match = re.search(r'(\d+)\s+(day|month|year)', value)
             if match:
                 number = int(match.group(1))
@@ -181,7 +158,6 @@ class SQLGenerator:
                     return f"{field} >= date('now', '-{number} months')"
                 elif unit == 'year':
                     return f"{field} >= date('now', '-{number} years')"
-        
         elif condition_type == 'since_date':
             return f"{field} >= ?"
         elif condition_type == 'before_date':
@@ -192,12 +168,9 @@ class SQLGenerator:
         return f"{field} = ?"
     
     def _build_group_by_clause(self, parsed: ParsedQuery) -> str:
-        """Build GROUP BY clause"""
         if parsed.group_by:
             return f"GROUP BY {', '.join(parsed.group_by)}"
         elif parsed.aggregations and parsed.columns:
-            # If we have aggregations but no explicit group by,
-            # group by non-aggregated columns
             non_agg_columns = [col for col in parsed.columns 
                              if col != '*' and col not in [agg['column'] for agg in parsed.aggregations]]
             if non_agg_columns:
@@ -207,7 +180,6 @@ class SQLGenerator:
         return ""
     
     def _build_order_by_clause(self, parsed: ParsedQuery) -> str:
-        """Build ORDER BY clause"""
         order_items = []
         
         for order in parsed.order_by:
@@ -216,9 +188,8 @@ class SQLGenerator:
             order_items.append(f"{column} {direction}")
         
         return f"ORDER BY {', '.join(order_items)}"
-    
+        
     def _generate_insert(self, parsed: ParsedQuery, schema: Dict) -> str:
-        """Generate INSERT query"""
         if not parsed.tables:
             self.confidence = 0.1
             return "-- Unable to generate INSERT query: no table specified"
@@ -227,7 +198,6 @@ class SQLGenerator:
         self.assumptions.append("INSERT query generation requires values to be provided separately")
         self.confidence = 0.7
         
-        # Get columns from schema
         if table in schema:
             columns = [col['name'] for col in schema[table]['columns'] if col['name'] != 'id']
             placeholders = ', '.join(['?' for _ in columns])
@@ -236,7 +206,6 @@ class SQLGenerator:
         return f"INSERT INTO {table} VALUES (?)"
     
     def _generate_update(self, parsed: ParsedQuery, schema: Dict) -> str:
-        """Generate UPDATE query"""
         if not parsed.tables:
             self.confidence = 0.1
             return "-- Unable to generate UPDATE query: no table specified"
@@ -245,10 +214,7 @@ class SQLGenerator:
         self.assumptions.append("UPDATE query requires SET values to be provided")
         self.confidence = 0.7
         
-        # Build SET clause (placeholder)
         set_clause = "SET column_name = ?"
-        
-        # Build WHERE clause
         where_clause = ""
         if parsed.conditions:
             where_clause = self._build_where_clause(parsed)
@@ -263,14 +229,11 @@ class SQLGenerator:
         return '\n'.join(query_parts)
     
     def _generate_delete(self, parsed: ParsedQuery, schema: Dict) -> str:
-        """Generate DELETE query"""
         if not parsed.tables:
             self.confidence = 0.1
             return "-- Unable to generate DELETE query: no table specified"
         
         table = parsed.tables[0]
-        
-        # Build WHERE clause
         where_clause = ""
         if parsed.conditions:
             where_clause = self._build_where_clause(parsed)
