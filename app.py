@@ -96,23 +96,42 @@ with col1:
         col1_1, col1_2, col1_3 = st.columns(3)
         with col1_1:
             if st.button("✅ Execute Query", type="primary"):
+                # Get parameters from the SQL result
+                parameters = st.session_state.current_sql.get('parameters', [])
+                
+                # Execute the query with parameters
                 result = st.session_state.executor.execute(
                     edited_sql,
-                    st.session_state.schema_manager.get_connection()
+                    st.session_state.schema_manager.get_connection(),
+                    parameters  # Add this parameter
                 )
+                
                 if result['success']:
                     st.success("Query executed successfully!")
+                    
+                    # Display results
                     if result['data']:
                         st.subheader("Query Results")
                         df = pd.DataFrame(result['data'])
                         st.dataframe(df, use_container_width=True)
+                        
+                        # Show parameter info if any were used
+                        if parameters:
+                            with st.expander("🔒 Security Info"):
+                                st.info(f"Query executed with {len(parameters)} parameters for security")
+                                st.code(f"Parameters: {parameters}")
+                        
+                        # Log successful query
                         st.session_state.query_history.append({
                             'timestamp': datetime.now().isoformat(),
                             'natural_query': st.session_state.current_query,
                             'sql_query': edited_sql,
+                            'parameters': parameters,  # Add this
                             'success': True,
                             'feedback': 'positive'
                         })
+                        
+                        # Update feedback manager
                         st.session_state.feedback_manager.add_feedback(
                             st.session_state.current_query,
                             edited_sql,
@@ -122,6 +141,16 @@ with col1:
                         st.info("Query executed but returned no results.")
                 else:
                     st.error(f"Error: {result['error']}")
+                    
+                    # Log failed query
+                    st.session_state.query_history.append({
+                        'timestamp': datetime.now().isoformat(),
+                        'natural_query': st.session_state.current_query,
+                        'sql_query': edited_sql,
+                        'parameters': parameters,  # Add this
+                        'success': False,
+                        'error': result['error']
+                    })
         with col1_2:
             if st.button("🔄 Regenerate"):
                 del st.session_state.current_sql
