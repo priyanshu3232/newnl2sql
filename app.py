@@ -511,7 +511,112 @@ with col1:
                 st.write("The following parameters will be used for secure execution:")
                 for i, param in enumerate(parameters):
                     st.code(f"Parameter {i+1}: {param}")
+        # Add this debug section in your app.py after query generation
+# and before the "Execute Query" button
+
+if hasattr(st.session_state, 'current_sql'):
+    # Debug Information Section
+    with st.expander("🔍 Debug Information", expanded=False):
+        st.subheader("Query Analysis")
         
+        col_debug1, col_debug2 = st.columns(2)
+        
+        with col_debug1:
+            st.write("**SQL Query:**")
+            st.code(st.session_state.current_sql['query'], language='sql')
+            
+            st.write("**Parameters:**")
+            params = st.session_state.current_sql.get('parameters', [])
+            for i, param in enumerate(params):
+                st.text(f"${i+1}: {param}")
+        
+        with col_debug2:
+            sql_query = st.session_state.current_sql['query']
+            param_count = sql_query.count('?')
+            provided_params = len(st.session_state.current_sql.get('parameters', []))
+            
+            st.metric("Expected Parameters", param_count)
+            st.metric("Provided Parameters", provided_params)
+            
+            if param_count == provided_params:
+                st.success("✅ Parameter count matches")
+            else:
+                st.error(f"❌ Parameter mismatch: Expected {param_count}, got {provided_params}")
+            
+            st.write("**Parsed Query Info:**")
+            if hasattr(st.session_state, 'current_parsed'):
+                parsed = st.session_state.current_parsed
+                st.text(f"Action: {parsed.action}")
+                st.text(f"Tables: {parsed.tables}")
+                st.text(f"Columns: {parsed.columns}")
+                st.text(f"Conditions: {len(parsed.conditions)}")
+        
+        # Test database connection
+        st.subheader("Database Connection Test")
+        if st.button("Test Database Connection"):
+            conn = st.session_state.schema_manager.get_connection()
+            if conn:
+                try:
+                    cursor = conn.cursor()
+                    
+                    # Test table existence
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                    tables = cursor.fetchall()
+                    st.write(f"✅ Database has {len(tables)} tables")
+                    
+                    # Test sample data
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM mst_employee 
+                        WHERE user_id = ? AND company_name = ?
+                    """, (st.session_state.current_user, st.session_state.current_company))
+                    emp_count = cursor.fetchone()[0]
+                    st.write(f"📊 Employee records: {emp_count}")
+                    
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM mst_ledger 
+                        WHERE user_id = ? AND company_name = ?
+                    """, (st.session_state.current_user, st.session_state.current_company))
+                    ledger_count = cursor.fetchone()[0]
+                    st.write(f"📊 Ledger records: {ledger_count}")
+                    
+                    cursor.close()
+                    
+                    if emp_count == 0 and ledger_count == 0:
+                        st.warning("⚠️ No data found for current user/company. Try reloading the schema.")
+                        
+                except Exception as e:
+                    st.error(f"Database test failed: {e}")
+            else:
+                st.error("❌ No database connection available")
+
+# Add a simple test query button for debugging
+if st.button("🧪 Test Simple Query"):
+    try:
+        conn = st.session_state.schema_manager.get_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT name, designation, location 
+                FROM mst_employee 
+                WHERE user_id = ? AND company_name = ? 
+                LIMIT 3
+            """, (st.session_state.current_user, st.session_state.current_company))
+            
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            cursor.close()
+            
+            if rows:
+                st.success(f"✅ Found {len(rows)} employees")
+                import pandas as pd
+                df = pd.DataFrame(rows, columns=columns)
+                st.dataframe(df)
+            else:
+                st.warning("No employee data found. Database might be empty.")
+        else:
+            st.error("No database connection")
+    except Exception as e:
+        st.error(f"Test query failed: {e}")
         # Execution buttons
         if st.session_state.llm_enabled:
             col1_1, col1_2, col1_3, col1_4 = st.columns(4)
