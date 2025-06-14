@@ -278,8 +278,9 @@ with col1:
     st.header("💬 Enter Your Query")
     
     # Use sample query if selected
-    default_query = st.session_state.get('sample_query', '')
-    if default_query:
+    default_query = ""
+    if 'sample_query' in st.session_state and st.session_state.sample_query:
+        default_query = st.session_state.sample_query
         # Clear the sample query after using it
         del st.session_state.sample_query
     
@@ -288,8 +289,15 @@ with col1:
         value=default_query,
         placeholder="e.g., Show me all employees with their salary details for January 2024",
         height=100,
-        help="Ask questions about employees, ledgers, stock items, vouchers, etc."
+        help="Ask questions about employees, ledgers, stock items, vouchers, etc.",
+        key="user_query_input"
     )
+    
+    # Debug: Show current query value (remove this in production)
+    if st.checkbox("Show Debug Info", value=False):
+        st.write(f"**Debug - Current query:** '{user_query}'")
+        st.write(f"**Debug - Query length:** {len(user_query) if user_query else 0}")
+        st.write(f"**Debug - Query stripped:** '{user_query.strip() if user_query else ''}'")
     
     # Check if schema is loaded before allowing query processing
     if not schema:
@@ -302,11 +310,11 @@ with col1:
             col_btn1, col_btn2, col_btn3 = st.columns(3)
         
         with col_btn1:
-            generate_clicked = st.button("🔮 Generate SQL", type="primary", disabled=not user_query.strip())
+            generate_clicked = st.button("🔮 Generate SQL", type="primary", disabled=not (user_query and user_query.strip()))
         
         with col_btn2:
-            if st.button("📊 Generate Report", disabled=not user_query.strip()):
-                if user_query:
+            if st.button("📊 Generate Report", disabled=not (user_query and user_query.strip())):
+                if user_query and user_query.strip():
                     try:
                         # Detect report type from query
                         query_lower = user_query.lower()
@@ -351,6 +359,8 @@ with col1:
                             
                     except Exception as e:
                         st.error(f"Error generating report: {str(e)}")
+                else:
+                    st.warning("Please enter a query first")
         
         with col_btn3:
             if st.button("🧹 Clear"):
@@ -358,6 +368,9 @@ with col1:
                 for key in ['current_sql', 'current_query', 'current_judgment', 'execution_judgment']:
                     if key in st.session_state:
                         del st.session_state[key]
+                # Clear the text area by resetting its key
+                if 'user_query_input' in st.session_state:
+                    st.session_state['user_query_input'] = ""
                 st.rerun()
         
         if st.session_state.llm_enabled:
@@ -376,9 +389,16 @@ with col1:
                                 st.error(f"AI Judge evaluation failed: {str(e)}")
         
         # Process generate SQL button
-        if generate_clicked and user_query:
+        if generate_clicked and user_query and user_query.strip():
             try:
                 with st.spinner("Parsing your query..."):
+                    # Debug schema (only if debug is enabled)
+                    if st.session_state.get('show_debug', False):
+                        st.write("**Debug Info:**")
+                        st.write(f"Schema loaded: {bool(st.session_state.schema_manager.get_schema())}")
+                        schema_dict = st.session_state.schema_manager.get_schema()
+                        st.write(f"Schema tables: {list(schema_dict.keys()) if schema_dict else 'None'}")
+                    
                     # Parse the natural language query
                     parsed_result = st.session_state.parser.parse(
                         user_query, 
@@ -387,11 +407,25 @@ with col1:
                         st.session_state.current_company
                     )
                     
+                    # Debug parsing results (only if debug is enabled)
+                    if st.session_state.get('show_debug', False):
+                        st.write(f"Parsed action: {parsed_result.action}")
+                        st.write(f"Parsed tables: {parsed_result.tables}")
+                        st.write(f"Parsed columns: {parsed_result.columns}")
+                        st.write(f"Parsed conditions: {parsed_result.conditions}")
+                    
                     # Generate SQL
                     sql_result = st.session_state.sql_generator.generate(
                         parsed_result,
                         st.session_state.schema_manager.get_schema()
                     )
+                    
+                    # Debug SQL generation (only if debug is enabled)
+                    if st.session_state.get('show_debug', False):
+                        st.write(f"Generated SQL: {sql_result.get('query', 'No query generated')}")
+                        st.write(f"Parameters: {sql_result.get('parameters', [])}")
+                        st.write(f"Assumptions: {sql_result.get('assumptions', [])}")
+                        st.write(f"Confidence: {sql_result.get('confidence', 0)}")
                     
                     # Store in session state for confirmation
                     st.session_state.current_sql = sql_result
@@ -410,9 +444,12 @@ with col1:
                                 st.session_state.current_judgment = judgment
                             except Exception as e:
                                 st.warning(f"AI Judge evaluation failed: {str(e)}")
-            
+                                
             except Exception as e:
                 st.error(f"Error processing query: {str(e)}")
+                import traceback
+                with st.expander("Error Details"):
+                    st.code(traceback.format_exc())
                 st.info("Please check your query and try again. Make sure the database schema is loaded.")
     
     # Display generated SQL and assumptions
