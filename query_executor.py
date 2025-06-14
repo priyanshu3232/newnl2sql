@@ -31,6 +31,7 @@ class QueryExecutor:
                 'data': None
             }
         
+        cursor = None  # Initialize cursor to None
         try:
             cursor = connection.cursor()
             
@@ -81,7 +82,9 @@ class QueryExecutor:
                 'data': None
             }
         finally:
-            cursor.close()
+            # Only close cursor if it was successfully created
+            if cursor is not None:
+                cursor.close()
     
     def _validate_query(self, sql_query: str) -> Dict[str, Any]:
         """Enhanced query validation"""
