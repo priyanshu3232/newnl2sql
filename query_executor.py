@@ -31,6 +31,17 @@ class QueryExecutor:
                 'data': None
             }
         
+        # Add parameter count validation
+        if parameters:
+            param_count = sql_query.count('?')
+            if len(parameters) != param_count:
+                return {
+                    'success': False,
+                    'error': f"Parameter mismatch: SQL expects {param_count} parameters, got {len(parameters)}. Parameters: {parameters}",
+                    'data': None
+                }
+        
+        cursor = None
         try:
             cursor = connection.cursor()
             
@@ -67,21 +78,36 @@ class QueryExecutor:
                 
         except sqlite3.Error as e:
             if connection:
-                connection.rollback()
+                try:
+                    connection.rollback()
+                except:
+                    pass  # Ignore rollback errors
             
             return {
                 'success': False,
                 'error': f"Database error: {str(e)}",
-                'data': None
+                'data': None,
+                'debug_info': {
+                    'sql': sql_query,
+                    'parameters': parameters,
+                    'param_count_expected': sql_query.count('?'),
+                    'param_count_provided': len(parameters) if parameters else 0
+                }
             }
         except Exception as e:
             return {
                 'success': False,
                 'error': f"Unexpected error: {str(e)}",
-                'data': None
+                'data': None,
+                'debug_info': {
+                    'sql': sql_query,
+                    'parameters': parameters
+                }
             }
         finally:
-            cursor.close()
+            if cursor:
+                cursor.close()
+            # Don't close connection here as it's managed by the caller
     
     def _validate_query(self, sql_query: str) -> Dict[str, Any]:
         """Enhanced query validation"""
