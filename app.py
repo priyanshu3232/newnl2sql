@@ -13,6 +13,7 @@ from sql_generator import SQLGenerator
 from query_executor import QueryExecutor
 from feedback_manager import FeedbackManager
 from schema_manager import SchemaManager
+from llm_judge import GroqLLMJudge  # New import
 
 # Initialize session state
 if 'query_history' not in st.session_state:
@@ -32,19 +33,81 @@ if 'current_user' not in st.session_state:
 if 'current_company' not in st.session_state:
     st.session_state.current_company = "Demo Company Ltd"
 
+# Initialize LLM Judge (only if API key is available)
+if 'llm_judge' not in st.session_state:
+    try:
+        # Try to initialize LLM Judge with API key
+        groq_api_key = os.getenv('GROQ_API_KEY') or st.secrets.get('GROQ_API_KEY', None)
+        if groq_api_key:
+            st.session_state.llm_judge = GroqLLMJudge(api_key=groq_api_key)
+            st.session_state.llm_enabled = True
+        else:
+            st.session_state.llm_judge = None
+            st.session_state.llm_enabled = False
+    except Exception as e:
+        st.session_state.llm_judge = None
+        st.session_state.llm_enabled = False
+
 # Page config
 st.set_page_config(
-    page_title="Tally ERP Text-to-SQL Agent",
+    page_title="Tally ERP Text-to-SQL Agent with AI Judge",
     page_icon="💼",
     layout="wide"
 )
 
 # Title and description
-st.title("💼 Tally ERP Text-to-SQL Agent")
-st.markdown("### Convert natural language queries to SQL for Tally ERP database")
+st.title("💼 Tally ERP Text-to-SQL Agent with AI Judge")
+st.markdown("### Convert natural language queries to SQL for Tally ERP database with LLM-powered quality assessment")
 
-# User and Company Selection
+# Sidebar with API Key configuration
 with st.sidebar:
+    st.header("🔧 Configuration")
+    
+    # API Key input
+    api_key_input = st.text_input(
+        "Groq API Key", 
+        type="password",
+        value="",
+        help="Enter your Groq API key to enable LLM judge functionality"
+    )
+    
+    if api_key_input and not st.session_state.llm_enabled:
+        try:
+            st.session_state.llm_judge = GroqLLMJudge(api_key=api_key_input)
+            st.session_state.llm_enabled = True
+            st.success("✅ LLM Judge enabled!")
+        except Exception as e:
+            st.error(f"❌ Failed to initialize LLM Judge: {str(e)}")
+    
+    # LLM Status
+    if st.session_state.llm_enabled:
+        st.success("🤖 AI Judge: ACTIVE")
+        
+        # Show LLM statistics
+        if st.button("📊 View Learning Report"):
+            if st.session_state.llm_judge:
+                report = st.session_state.llm_judge.generate_learning_report()
+                with st.expander("📈 Learning Report", expanded=True):
+                    if 'message' in report:
+                        st.info(report['message'])
+                    else:
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Total Evaluations", report.get('total_evaluations', 0))
+                            st.metric("Success Rate", f"{report.get('success_rate', 0):.1%}")
+                        with col2:
+                            st.metric("Avg LLM Score", f"{report.get('average_llm_score', 0):.2f}")
+                            
+                        trends = report.get('improvement_trends', {})
+                        if 'trend' in trends:
+                            trend_emoji = "📈" if trends['trend'] == 'improving' else "📉" if trends['trend'] == 'declining' else "➡️"
+                            st.info(f"{trend_emoji} Trend: {trends['trend'].title()}")
+    else:
+        st.warning("🤖 AI Judge: DISABLED")
+        st.info("💡 Add your Groq API key above to enable AI-powered query evaluation")
+    
+    st.markdown("---")
+    
     st.header("👤 User Context")
     
     # User selection (in real app, this would be authentication)
@@ -84,7 +147,7 @@ with st.sidebar:
             total_records = sum(stat.get('row_count', 0) for stat in stats.values())
             st.metric("Total Records", total_records)
         
-        # Schema browser
+        # Schema browser (keeping original implementation)
         st.subheader("🗂️ Schema Browser")
         
         # Group tables by type
@@ -139,7 +202,7 @@ with st.sidebar:
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    # Sample queries section
+    # Sample queries section (keeping original implementation)
     st.header("🎯 Try These Sample Queries")
     
     if schema:
@@ -170,7 +233,7 @@ with col1:
     )
     
     # Query processing
-    col_btn1, col_btn2, col_btn3 = st.columns(3)
+    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)  # Added one more column
     
     with col_btn1:
         generate_clicked = st.button("🔮 Generate SQL", type="primary")
@@ -218,295 +281,3 @@ with col1:
                     st.session_state.current_sql = sql_result
                     st.session_state.current_query = user_query
                     st.session_state.current_parsed = parsed_result
-    
-    with col_btn3:
-        if st.button("🧹 Clear"):
-            if 'current_sql' in st.session_state:
-                del st.session_state.current_sql
-            if 'current_query' in st.session_state:
-                del st.session_state.current_query
-            st.rerun()
-    
-    # Process generate SQL button
-    if generate_clicked and user_query:
-        with st.spinner("Parsing your query..."):
-            # Parse the natural language query
-            parsed_result = st.session_state.parser.parse(
-                user_query, 
-                st.session_state.schema_manager.get_schema(),
-                st.session_state.current_user,
-                st.session_state.current_company
-            )
-            
-            # Generate SQL
-            sql_result = st.session_state.sql_generator.generate(
-                parsed_result,
-                st.session_state.schema_manager.get_schema()
-            )
-            
-            # Store in session state for confirmation
-            st.session_state.current_sql = sql_result
-            st.session_state.current_query = user_query
-            st.session_state.current_parsed = parsed_result
-    
-    # Display generated SQL and assumptions
-    if hasattr(st.session_state, 'current_sql'):
-        st.header("🔧 Generated SQL Query")
-        
-        # Show confidence and assumptions
-        col_conf, col_ass = st.columns(2)
-        
-        with col_conf:
-            confidence = st.session_state.current_sql.get('confidence', 0.0)
-            st.metric("Confidence Score", f"{confidence:.0%}")
-            
-            # Color code based on confidence
-            if confidence >= 0.8:
-                st.success("High confidence")
-            elif confidence >= 0.6:
-                st.warning("Medium confidence") 
-            else:
-                st.error("Low confidence - please review carefully")
-        
-        with col_ass:
-            assumptions = st.session_state.current_sql.get('assumptions', [])
-            if assumptions:
-                with st.expander("📋 Assumptions Made", expanded=True):
-                    for i, assumption in enumerate(assumptions):
-                        st.info(f"{i+1}. {assumption}")
-            else:
-                st.info("No specific assumptions were made.")
-        
-        # SQL Query display with editing capability
-        st.subheader("📝 SQL Query")
-        edited_sql = st.text_area(
-            "You can edit the SQL if needed:",
-            value=st.session_state.current_sql['query'],
-            height=200,
-            help="Review and modify the generated SQL query before execution"
-        )
-        
-        # Show parameters if any
-        parameters = st.session_state.current_sql.get('parameters', [])
-        if parameters:
-            with st.expander("🔒 Query Parameters", expanded=False):
-                st.write("The following parameters will be used for secure execution:")
-                for i, param in enumerate(parameters):
-                    st.code(f"Parameter {i+1}: {param}")
-        
-        # Confirmation buttons
-        col1_1, col1_2, col1_3 = st.columns(3)
-        
-        with col1_1:
-            if st.button("✅ Execute Query", type="primary"):
-                # Execute the query with parameters
-                result = st.session_state.executor.execute(
-                    edited_sql,
-                    st.session_state.schema_manager.get_connection(),
-                    parameters
-                )
-                
-                if result['success']:
-                    st.success("Query executed successfully!")
-                    
-                    # Display results
-                    if result['data']:
-                        st.subheader("📊 Query Results")
-                        df = pd.DataFrame(result['data'])
-                        
-                        # Format numeric columns
-                        for col in df.columns:
-                            if df[col].dtype in ['float64', 'int64']:
-                                if 'amount' in col.lower() or 'balance' in col.lower() or 'value' in col.lower():
-                                    df[col] = df[col].apply(lambda x: f"₹{x:,.2f}" if pd.notnull(x) else "")
-                        
-                        st.dataframe(df, use_container_width=True)
-                        
-                        # Show export options
-                        col_exp1, col_exp2 = st.columns(2)
-                        with col_exp1:
-                            csv = df.to_csv(index=False)
-                            st.download_button(
-                                label="📥 Download CSV",
-                                data=csv,
-                                file_name=f"tally_query_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                                mime="text/csv"
-                            )
-                        
-                        with col_exp2:
-                            st.info(f"Found {len(df)} records")
-                        
-                        # Show parameter info if any were used
-                        if parameters:
-                            with st.expander("🔒 Security Info"):
-                                st.success(f"Query executed securely with {len(parameters)} parameters")
-                        
-                        # Log successful query
-                        st.session_state.query_history.append({
-                            'timestamp': datetime.now().isoformat(),
-                            'natural_query': st.session_state.current_query,
-                            'sql_query': edited_sql,
-                            'parameters': parameters,
-                            'success': True,
-                            'result_count': len(df),
-                            'feedback': 'positive'
-                        })
-                        
-                        # Update feedback manager
-                        st.session_state.feedback_manager.add_feedback(
-                            st.session_state.current_query,
-                            edited_sql,
-                            'positive'
-                        )
-                    else:
-                        st.info("Query executed successfully but returned no results.")
-                        st.info("💡 Try adjusting your search criteria or date ranges.")
-                else:
-                    st.error(f"❌ Error: {result['error']}")
-                    
-                    # Log failed query
-                    st.session_state.query_history.append({
-                        'timestamp': datetime.now().isoformat(),
-                        'natural_query': st.session_state.current_query,
-                        'sql_query': edited_sql,
-                        'parameters': parameters,
-                        'success': False,
-                        'error': result['error']
-                    })
-        
-        with col1_2:
-            if st.button("🔄 Regenerate"):
-                # Clear current SQL to regenerate
-                del st.session_state.current_sql
-                st.rerun()
-        
-        with col1_3:
-            if st.button("❌ Cancel"):
-                # Clear current SQL
-                del st.session_state.current_sql
-                st.rerun()
-
-with col2:
-    # Query history
-    st.header("📜 Query History")
-    
-    if st.session_state.query_history:
-        # Show last 5 queries
-        for i, query in enumerate(reversed(st.session_state.query_history[-5:])):
-            with st.expander(f"Query {len(st.session_state.query_history) - i}"):
-                st.text(f"⏰ {query['timestamp'][:19]}")
-                st.text(f"💬 {query['natural_query'][:50]}...")
-                
-                if query['success']:
-                    st.success(f"✅ Success - {query.get('result_count', 0)} records")
-                else:
-                    st.error("❌ Failed")
-                
-                # Show SQL in expandable section
-                with st.expander("View SQL"):
-                    st.code(query['sql_query'], language='sql')
-                
-                # Feedback buttons
-                col_fb1, col_fb2 = st.columns(2)
-                with col_fb1:
-                    if st.button("👍", key=f"thumb_up_{i}"):
-                        st.success("Thanks for the feedback!")
-                with col_fb2:
-                    if st.button("👎", key=f"thumb_down_{i}"):
-                        st.info("Feedback noted for improvement!")
-    else:
-        st.info("No queries executed yet. Try the sample queries above!")
-    
-    # Quick actions
-    st.markdown("---")
-    st.header("⚡ Quick Actions")
-    
-    quick_queries = [
-        "Show all employees",
-        "Total sales this month",
-        "Stock items below 10 units",
-        "GST registered customers",
-        "Recent vouchers"
-    ]
-    
-    for query in quick_queries:
-        if st.button(query, key=f"quick_{query}"):
-            st.session_state.sample_query = query
-            st.rerun()
-
-# Footer with enhanced statistics
-st.markdown("---")
-col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-
-with col_f1:
-    total_queries = len(st.session_state.query_history)
-    st.metric("Total Queries", total_queries)
-
-with col_f2:
-    successful_queries = sum(1 for q in st.session_state.query_history if q['success'])
-    st.metric("Successful Queries", successful_queries)
-
-with col_f3:
-    if total_queries > 0:
-        success_rate = (successful_queries / total_queries) * 100
-        st.metric("Success Rate", f"{success_rate:.1f}%")
-    else:
-        st.metric("Success Rate", "N/A")
-
-with col_f4:
-    if st.session_state.query_history:
-        total_records = sum(q.get('result_count', 0) for q in st.session_state.query_history if q['success'])
-        st.metric("Records Fetched", total_records)
-    else:
-        st.metric("Records Fetched", 0)
-
-# Help section
-with st.expander("❓ Help & Tips", expanded=False):
-    st.markdown("""
-    ### 🚀 How to use this Tally ERP Text-to-SQL Agent:
-    
-    **1. Load the Database:**
-    - Click "Load Tally ERP Schema" in the sidebar to initialize the database
-    
-    **2. Ask Natural Language Questions:**
-    - Use business language: "Show me all employees with salary details"
-    - Specify time periods: "Sales vouchers from last month"
-    - Ask for summaries: "Total stock value by item category"
-    
-    **3. Sample Query Types:**
-    - **Employee queries:** "Show employees in Mumbai", "Payroll summary for John"
-    - **Ledger queries:** "Customers with outstanding balance", "GST registered parties"
-    - **Stock queries:** "Items with low stock", "Inventory movements this month"
-    - **Voucher queries:** "Recent sales transactions", "Purchase vouchers from Supplier B"
-    - **Reports:** "Trial balance", "Stock summary", "Payroll report"
-    
-    **4. Review & Execute:**
-    - Check the generated SQL and assumptions
-    - Edit if needed before execution
-    - Parameters are automatically handled for security
-    
-    **5. Tally-Specific Features:**
-    - Multi-tenant support (user_id and company_name filters)
-    - GST compliance queries
-    - Standard Tally reports
-    - Date range filtering
-    - Balance and stock level queries
-    
-    **⚠️ Important Notes:**
-    - All queries are automatically filtered by user and company for data security
-    - The system uses parameterized queries to prevent SQL injection
-    - Generated SQL can be edited before execution
-    - Complex reports may take longer to execute
-    """)
-
-# Developer info
-st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center; color: #666; font-size: 12px;'>
-    🔧 Tally ERP Text-to-SQL Agent | Built with Streamlit | 
-    Secure • Multi-tenant • Production-ready
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
